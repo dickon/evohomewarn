@@ -1,14 +1,18 @@
 from evohomeasync2 import EvohomeClient
-from asyncio import run, sleep, get_event_loop
+from asyncio import run, sleep, get_event_loop, create_task
 from aiosqlite import connect
 from sqlite3 import OperationalError
-from time import time
+from time import time, gmtime
+from aiohttp import web
+from pygal import XY
 
 def whitelist(text):
     return ''.join([(c if c.isalnum() or c == ' ' else '_') for c in text])
 
+
+
 async def query():
-    wakeup()
+    print('query running')
     db = await connect('records.sqlite')
     try:
         await db.execute('CREATE TABLE events (thermostat name, time real, temperature real, setpoint real)')
@@ -35,15 +39,45 @@ async def query():
             cmd = f'INSERT INTO events (thermostat, time, temperature, setpoint) values ("{name}", {time()}, {temp}, {setpoint})'
             print(cmd)
             await db.execute(cmd)
+            # TODO: fold the existing events to work out if radiator is not producing heat on demand
+        await db.commit()
         await sleep(300)
     await client._session.close()
     await db.close()
     await whitelist()
 
+async def start_query(app):
+    app['query'] = create_task(query())
+
+async def stop_query(app):
+    app['query'].cancel()
+    await app['query']
+
 # see https://stackoverflow.com/questions/27480967/why-does-the-asyncios-event-loop-suppress-the-keyboardinterrupt-on-windows
-async def wakeup():
+async def wakeup(app):
     while True:
         await sleep(1)
 
-    
-get_event_loop().run_until_complete(query())
+async def handle(request):
+    name = whitelist(request.match_info.get('name', "Cave"))
+    db = await connect('records.sqlite')
+    cr = await db.execute(f'SELECT time, temperature, setpoint FROM events WHERE thermostat="{name}" ORDER BY time')
+    chart = XY(title=f'Recent temperature trend in {name}', x_title='Hours', y_title='degress celsius')
+    setseries = []
+    tempseries = []
+    now = time()
+    for row in await cr.fetchall():
+        dt = (row[0] - now)/3600
+        tempseries.append((dt, row[1]))
+        setseries.append((dt, row[2]))
+    chart.add('temp', tempseries)
+    chart.add('set', setseries)
+
+    return web.Response(body=chart.render(), content_type='image/svg+xml')
+
+app = web.Application()
+app.router.add_get('/', handle)
+app.router.add_get('/{name}', handle)
+app.on_startup.append(start_query)
+app.on_cleanup.append(stop_query)
+web.run_app(app)
