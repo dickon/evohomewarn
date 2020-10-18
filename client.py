@@ -3,8 +3,9 @@ from asyncio import run, sleep, get_event_loop, create_task
 from aiosqlite import connect
 from sqlite3 import OperationalError
 from time import time, gmtime
-from aiohttp import web
+from aiohttp import web, ClientSession
 from pygal import XY
+from json import loads
 
 def whitelist(text):
     return ''.join([(c if c.isalnum() or c == ' ' else '_') for c in text])
@@ -25,18 +26,25 @@ async def query():
     with open('credentials.txt', 'r') as o:
         username = o.readline().strip()
         password = o.readline().strip()
+        weatherkey = o.readline().strip()
+        city_name =  o.readline().strip()
     client = EvohomeClient(username,  password)
     await client.login()
         
     print('hello')
     while True:
+        async with ClientSession() as session:
+            url =f'http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={weatherkey}&units=metric'
+            async with session.get(url) as response:
+                json = await response.text()
+            current = loads(json)
         temps = await client.temperatures()
         async for device in temps:
             print(device)
             name = whitelist(device['name'])
             temp = float(device['temp'])
             setpoint = float(device['setpoint']) if device.get('setpoint') else 0
-            cmd = f'INSERT INTO events (thermostat, time, temperature, setpoint) values ("{name}", {time()}, {temp}, {setpoint})'
+            cmd = f'INSERT INTO events (thermostat, time, temperature, setpoint, outside) values ("{name}", {time()}, {temp}, {setpoint}, {current["main"]["temp"]})'
             print(cmd)
             await db.execute(cmd)
             # TODO: fold the existing events to work out if radiator is not producing heat on demand
@@ -61,18 +69,21 @@ async def wakeup(app):
 async def handle(request):
     name = whitelist(request.match_info.get('name', "Cave"))
     db = await connect('records.sqlite')
-    cr = await db.execute(f'SELECT time, temperature, setpoint FROM events WHERE thermostat="{name}" ORDER BY time')
+    cr = await db.execute(f'SELECT time, temperature, setpoint, outside FROM events WHERE thermostat="{name}" ORDER BY time')
     chart = XY(title=f'Recent temperature trend in {name}', x_title='Hours', y_title='degress celsius')
     setseries = []
     tempseries = []
+    outsideseries = []
     now = time()
     for row in await cr.fetchall():
         dt = (row[0] - now)/3600
         tempseries.append((dt, row[1]))
         setseries.append((dt, row[2]))
+        if row[3]:
+            outsideseries.append((dt, row[3]))
     chart.add('temp', tempseries)
     chart.add('set', setseries)
-
+    chart.add('outside', outsideseries)
     return web.Response(body=chart.render(), content_type='image/svg+xml')
 
 app = web.Application()
