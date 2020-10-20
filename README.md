@@ -1,6 +1,11 @@
 Keep data on evohome system and produce charts of recent temperatue changes on demand.
 
-credentials.txt format:
+# Example
+
+![Chart showing temperature readings, step points and outside temperature change](example.png "Temperature series in kitchen")
+
+
+# credentials.txt format
 
 One line per item:
 - TotalConnectComfort email address
