@@ -13,7 +13,7 @@ One line per item:
 - API key for openweather https://openweathermap.org/
 - City for openweather https://openweathermap.org/
 
+# Future plans
 
-Future plans:
-
+- add requirements.txt
 - Spot a room not getting warmer despite temperature demand and alert people
